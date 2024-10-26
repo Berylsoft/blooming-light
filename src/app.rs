@@ -2,10 +2,11 @@ use core::{f32, f64};
 use std::{collections::VecDeque, ops::Range, time::Instant};
 
 use anyhow::{anyhow, Context};
+use demo_source::DemoSource;
 use eframe::{
     egui::{
-        pos2, CentralPanel, Context as EguiCtx, DragValue, Grid, Id,
-        Rect, RichText, ScrollArea, Sense, Window,
+        pos2, CentralPanel, Color32, Context as EguiCtx, DragValue, Grid,
+        Id, Rect, RichText, ScrollArea, Sense, Window,
     },
     CreationContext,
 };
@@ -13,6 +14,7 @@ use tracing::info;
 
 use self::network::Network;
 
+mod demo_source;
 mod font;
 mod network;
 
@@ -27,6 +29,14 @@ pub struct App {
 
     msg_send_delay_secs: f64,
     msg_send_delay_secs_id: Id,
+
+    demo_settings_show: bool,
+    demo_settings_show_id: Id,
+    demo_enable: bool,
+    demo_enable_id: Id,
+    demo_interval_secs: f64,
+    demo_interval_secs_id: Id,
+    demo_source: DemoSource,
 }
 
 impl App {
@@ -39,6 +49,21 @@ impl App {
             .egui_ctx
             .data_mut(|d| d.get_persisted::<f64>(msg_send_delay_secs_id))
             .unwrap_or(10.0);
+        let demo_settings_show_id = Id::new("config.demo_settings_show");
+        let demo_settings_show = cc
+            .egui_ctx
+            .data_mut(|d| d.get_persisted::<bool>(demo_settings_show_id))
+            .unwrap_or(false);
+        let demo_enable_id = Id::new("config.demo_enable");
+        let demo_enable = cc
+            .egui_ctx
+            .data_mut(|d| d.get_persisted::<bool>(demo_enable_id))
+            .unwrap_or(false);
+        let demo_interval_secs_id = Id::new("config.demo_interval_secs");
+        let demo_interval_secs = cc
+            .egui_ctx
+            .data_mut(|d| d.get_persisted::<f64>(demo_interval_secs_id))
+            .unwrap_or(0.1);
 
         Self {
             network: Ok(NetworkState::new(cc.egui_ctx.clone())),
@@ -51,6 +76,14 @@ impl App {
 
             msg_send_delay_secs,
             msg_send_delay_secs_id,
+
+            demo_settings_show,
+            demo_settings_show_id,
+            demo_enable,
+            demo_enable_id,
+            demo_interval_secs,
+            demo_interval_secs_id,
+            demo_source: DemoSource::default(),
         }
     }
 
@@ -92,24 +125,28 @@ impl App {
                 }
 
                 if let Some(ref err) = network.network_ws_client_err {
-                    let msg = format!("{err:?}");
+                    if !self.demo_enable {
+                        let msg = format!("{err:?}");
 
-                    Window::new("Embed Websocket client error")
-                        .collapsible(false)
-                        .resizable(false)
-                        .show(ctx, |ui| {
-                            ui.label(msg);
+                        Window::new("Embed Websocket client error")
+                            .collapsible(false)
+                            .resizable(false)
+                            .show(ctx, |ui| {
+                                ui.label(msg);
 
-                            if ui.button("Restart client").clicked() {
-                                let result = network.restart_ws_client();
-                                if let Err(err) = result {
-                                    self.err_messages
-                                        .push(format!("{err:?}"));
-                                } else {
-                                    network.network_ws_client_err = None;
+                                if ui.button("Restart client").clicked() {
+                                    let result =
+                                        network.restart_ws_client();
+                                    if let Err(err) = result {
+                                        self.err_messages
+                                            .push(format!("{err:?}"));
+                                    } else {
+                                        network.network_ws_client_err =
+                                            None;
+                                    }
                                 }
-                            }
-                        });
+                            });
+                    }
                 }
 
                 false
@@ -177,8 +214,16 @@ impl eframe::App for App {
             ctx.request_discard("unexpected network err state");
             return;
         };
-        while let Some(msg) = network.pull_ws_message() {
-            new_msgs.push_back(msg);
+        if self.demo_enable {
+            if let Some(msg) =
+                self.demo_source.pull_demo_msg(self.demo_interval_secs)
+            {
+                new_msgs.push_back(msg);
+            }
+        } else {
+            while let Some(msg) = network.pull_ws_message() {
+                new_msgs.push_back(msg);
+            }
         }
 
         if !self.pause {
@@ -214,6 +259,54 @@ impl eframe::App for App {
             self.message_waiting.extend(new_msgs);
         }
 
+        if self.demo_settings_show {
+            Window::new("Demo Settings")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    if ui
+                        .checkbox(&mut self.demo_enable, "Enable")
+                        .changed()
+                    {
+                        ui.data_mut(|d| {
+                            d.insert_persisted(
+                                self.demo_enable_id,
+                                self.demo_enable,
+                            )
+                        });
+                    }
+
+                    ui.label("Send Interval(secs)");
+                    let res = ui.add(
+                        DragValue::new(&mut self.demo_interval_secs)
+                            .min_decimals(1)
+                            .max_decimals(2)
+                            .range(0.01..=1000.0)
+                            .speed(0.01),
+                    );
+                    if res.changed() {
+                        ui.data_mut(|d| {
+                            d.insert_persisted(
+                                self.demo_interval_secs_id,
+                                self.demo_interval_secs,
+                            )
+                        });
+                    }
+
+                    ui.separator();
+
+                    if ui.button("Close").clicked() {
+                        self.demo_settings_show = false;
+                        ui.data_mut(|d| {
+                            d.insert_persisted(
+                                self.demo_settings_show_id,
+                                self.demo_settings_show,
+                            )
+                        });
+                    }
+                });
+        }
+
         CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Send delay(secs): ");
@@ -232,6 +325,24 @@ impl eframe::App for App {
                             self.msg_send_delay_secs,
                         )
                     });
+                }
+
+                ui.separator();
+
+                if ui.button("Demo Settings").clicked() {
+                    self.demo_settings_show = true;
+                    ui.data_mut(|d| {
+                        d.insert_persisted(
+                            self.demo_settings_show_id,
+                            self.demo_settings_show,
+                        )
+                    });
+                }
+                if self.demo_enable {
+                    ui.separator();
+                    ui.label(
+                        RichText::new("Demo").color(Color32::LIGHT_GREEN),
+                    );
                 }
 
                 ui.separator();
