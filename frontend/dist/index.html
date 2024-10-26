@@ -9,26 +9,27 @@
                 background: transparent;
                 margin: 0;
                 font-size: 1.5vw;
+                overflow: hidden;
+
+                width: 100vw;
+                height: 100vh;
 
                 --spacing: 5;
                 --pps: 0.1;
             }
 
-            #container {
-                height: 100vh;
-                width: 100vw;
-            }
-
             #canvas {
-                height: 100vh;
+                position: absolute;
+                left: 0;
+                top: 0;
+
                 width: 100vw;
+                height: 100vh;
             }
         </style>
     </head>
     <body>
-        <div id="container">
-            <canvas id="canvas">canvas not available</canvas>
-        </div>
+        <canvas id="canvas">canvas not available</canvas>
         <script src="./index.js"></script>
     </body>
 </html>
