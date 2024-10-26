@@ -220,6 +220,7 @@ impl eframe::App for App {
             {
                 new_msgs.push_back(msg);
             }
+            while network.pull_ws_message().is_some() {}
         } else {
             while let Some(msg) = network.pull_ws_message() {
                 new_msgs.push_back(msg);
