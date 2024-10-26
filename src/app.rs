@@ -1,11 +1,11 @@
-use core::f32;
+use core::{f32, f64};
 use std::{collections::VecDeque, ops::Range, time::Instant};
 
 use anyhow::{anyhow, Context};
 use eframe::{
     egui::{
-        pos2, CentralPanel, Context as EguiCtx, Grid, Id, Rect, RichText,
-        ScrollArea, Sense, Window,
+        pos2, CentralPanel, Context as EguiCtx, DragValue, Grid, Id,
+        Rect, RichText, ScrollArea, Sense, Window,
     },
     CreationContext,
 };
@@ -16,21 +16,29 @@ use self::network::Network;
 mod font;
 mod network;
 
-const MSG_TIMEOUT_SECS: f64 = 10.0;
-
 pub struct App {
     network: anyhow::Result<NetworkState>,
     err_messages: Vec<String>,
 
     message: VecDeque<(String, Instant, bool)>,
     message_waiting: VecDeque<String>,
+
     pause: bool,
+
+    msg_send_delay_secs: f64,
+    msg_send_delay_secs_id: Id,
 }
 
 impl App {
     pub fn new(cc: &CreationContext) -> Self {
         font::setup_fonts(&cc.egui_ctx);
         // cc.egui_ctx.set_debug_on_hover(true);
+        let msg_send_delay_secs_id =
+            Id::new("config.msg_send_delay_secs");
+        let msg_send_delay_secs = cc
+            .egui_ctx
+            .data_mut(|d| d.get_persisted::<f64>(msg_send_delay_secs_id))
+            .unwrap_or(10.0);
 
         Self {
             network: Ok(NetworkState::new(cc.egui_ctx.clone())),
@@ -38,7 +46,11 @@ impl App {
 
             message: VecDeque::new(),
             message_waiting: VecDeque::new(),
+
             pause: false,
+
+            msg_send_delay_secs,
+            msg_send_delay_secs_id,
         }
     }
 
@@ -178,7 +190,9 @@ impl eframe::App for App {
             }
 
             while let Some((_, arrive_at, _)) = self.message.front() {
-                if arrive_at.elapsed().as_secs_f64() < MSG_TIMEOUT_SECS {
+                if arrive_at.elapsed().as_secs_f64()
+                    < self.msg_send_delay_secs
+                {
                     break;
                 }
                 let Some((msg, arrive_at, delete)) =
@@ -188,7 +202,8 @@ impl eframe::App for App {
                 };
 
                 assert!(
-                    arrive_at.elapsed().as_secs_f64() >= MSG_TIMEOUT_SECS
+                    arrive_at.elapsed().as_secs_f64()
+                        >= self.msg_send_delay_secs
                 );
                 assert!(!delete);
 
@@ -201,6 +216,26 @@ impl eframe::App for App {
 
         CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
+                ui.label("Send delay(secs): ");
+                let drag_value_res = ui.add(
+                    DragValue::new(&mut self.msg_send_delay_secs)
+                        .min_decimals(1)
+                        .max_decimals(1)
+                        .range(0.1..=1000.0)
+                        .speed(0.1)
+                        .update_while_editing(false),
+                );
+                if drag_value_res.changed() {
+                    ui.data_mut(|d| {
+                        d.insert_persisted(
+                            self.msg_send_delay_secs_id,
+                            self.msg_send_delay_secs,
+                        )
+                    });
+                }
+
+                ui.separator();
+
                 if self.pause {
                     ui.label(
                         RichText::new(format!(
@@ -258,7 +293,7 @@ impl eframe::App for App {
 
                     // draw timeout progress
                     let progress = (arrive_at.elapsed().as_secs_f64()
-                        / MSG_TIMEOUT_SECS)
+                        / self.msg_send_delay_secs)
                         .min(1.0)
                         as f32;
                     rect.set_width(rect.width() * progress);
