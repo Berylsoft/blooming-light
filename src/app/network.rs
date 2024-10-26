@@ -1,11 +1,15 @@
 use std::{
+    env,
     sync::mpsc,
     thread::{self, JoinHandle},
 };
 
 use anyhow::{anyhow, Context};
+use chrono::Utc;
 use eframe::egui::Context as EguiCtx;
+use serde::Serialize;
 use tokio::{
+    io::AsyncWriteExt,
     select,
     sync::{broadcast, mpsc as ampsc, oneshot},
     task as atask,
@@ -29,6 +33,7 @@ pub struct Network {
     stop_token: CancellationToken,
 
     ctrl_tx: ampsc::UnboundedSender<NetworkCmd>,
+    log_tx: ampsc::UnboundedSender<LogEntry>,
 }
 
 impl Network {
@@ -43,6 +48,7 @@ impl Network {
 
         let stop_token = CancellationToken::new();
         let (ctrl_tx, mut ctrl_rx) = ampsc::unbounded_channel();
+        let (log_tx, mut log_rx) = ampsc::unbounded_channel();
 
         let stop_token_cloned = stop_token.clone();
         let egui_ctx_cloned = egui_ctx.clone();
@@ -57,6 +63,16 @@ impl Network {
                     egui_ctx_cloned.clone(),
                 );
             let mut ws_client_handle = atask::spawn(ws_client_fut);
+
+            let log_file_path = env::current_dir()
+                .context("failed to get current working directory")?
+                .join("log.jsonl");
+            let mut log_file = tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_file_path)
+                .await
+                .context("failed to open log file")?;
 
             // NOTE: tuple due to rustfmt will mess with args formatting
             let handle_task_result = |(name, result, err_tx): (
@@ -128,6 +144,15 @@ impl Network {
                             },
                         }
                     }
+                    log = log_rx.recv() => {
+                        let Some(log) = log else {
+                            break;
+                        };
+                        let log = serde_json::to_string(&log).context("failed to serialize log")?;
+                        log_file.write_all(log.as_bytes()).await.context("failed to write log")?;
+                        log_file.write_all(b"\n").await.context("failed to write log(\\n)")?;
+                        log_file.flush().await.context("failed to flush log")?;
+                    }
                     result = &mut server_handle, if !server_handle.is_finished() => {
                         handle_task_result(("server", result, Some(err_server_tx.clone())));
                     }
@@ -181,6 +206,7 @@ impl Network {
 
             stop_token,
             ctrl_tx,
+            log_tx,
         }
     }
 
@@ -204,6 +230,17 @@ impl Network {
         let result = self.ws_msg_send_tx.send(msg);
         if let Err(err) = result {
             debug!("failed to send message to websocket threads: {err}");
+        }
+    }
+
+    pub fn write_log(&self, msg: String, is_delete: bool) {
+        let result = self.log_tx.send(LogEntry {
+            msg,
+            is_delete,
+            ts: Utc::now(),
+        });
+        if let Err(err) = result {
+            error!("failed to write log: {err:?}");
         }
     }
 
@@ -237,4 +274,11 @@ impl Network {
 enum NetworkCmd {
     RestartServer(oneshot::Sender<()>),
     RestartWsClient(oneshot::Sender<()>),
+}
+
+#[derive(Debug, Serialize)]
+struct LogEntry {
+    msg: String,
+    is_delete: bool,
+    ts: chrono::DateTime<Utc>,
 }

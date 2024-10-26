@@ -7,6 +7,7 @@ authors = ["Golden_Water <golden_water@chaosw.site>"]
 [dependencies]
 anyhow = { version = "1.0.90", features = ["backtrace"] }
 axum = { version = "0.8.0-alpha.1", features = ["ws", "macros"] }
+chrono = { version = "0.4.38", features = ["serde"] }
 delegate = "0.13.1"
 dotenv = "0.15.0"
 eframe = { version = "0.29.1", default-features = false, features = [

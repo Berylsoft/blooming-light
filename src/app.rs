@@ -192,11 +192,9 @@ impl eframe::App for App {
                 );
                 assert!(!delete);
 
-                network.broadcast_ws_message(msg);
+                network.broadcast_ws_message(msg.clone());
+                network.write_log(msg, false);
             }
-            self.message.retain(|(_, arrive_at, _)| {
-                arrive_at.elapsed().as_secs_f64() < MSG_TIMEOUT_SECS
-            });
         } else {
             self.message_waiting.extend(new_msgs);
         }
@@ -279,6 +277,11 @@ impl eframe::App for App {
                     }
                 }
 
+                self.message.iter().for_each(|(msg, _, delete)| {
+                    if *delete {
+                        network.write_log(msg.clone(), true);
+                    }
+                });
                 self.message.retain(|(_, _, delete)| !delete);
 
                 let btn_area = Id::new("message list button area");
@@ -342,6 +345,7 @@ impl NetworkState {
             pub fn pull_err(&self) -> Option<anyhow::Error>;
             pub fn pull_ws_message(&self) -> Option<String>;
             pub fn broadcast_ws_message(&self, msg: String);
+            pub fn write_log(&self, msg: String, is_delete: bool);
             pub fn restart_server(&self) -> anyhow::Result<()>;
             pub fn restart_ws_client(&self) -> anyhow::Result<()>;
             pub fn stop(self);
