@@ -177,6 +177,23 @@ impl eframe::App for App {
                 self.message.push_back((msg, Instant::now(), false));
             }
 
+            while let Some((_, arrive_at, _)) = self.message.front() {
+                if arrive_at.elapsed().as_secs_f64() < MSG_TIMEOUT_SECS {
+                    break;
+                }
+                let Some((msg, arrive_at, delete)) =
+                    self.message.pop_front()
+                else {
+                    break;
+                };
+
+                assert!(
+                    arrive_at.elapsed().as_secs_f64() >= MSG_TIMEOUT_SECS
+                );
+                assert!(!delete);
+
+                network.broadcast_ws_message(msg);
+            }
             self.message.retain(|(_, arrive_at, _)| {
                 arrive_at.elapsed().as_secs_f64() < MSG_TIMEOUT_SECS
             });
@@ -268,8 +285,11 @@ impl eframe::App for App {
                 let hovered = ui
                     .interact(
                         Rect::from_min_max(
-                            pos2(btn_x_range.start, ui.min_rect().top()),
-                            pos2(btn_x_range.end, ui.min_rect().bottom()),
+                            pos2(btn_x_range.start, ui.clip_rect().top()),
+                            pos2(
+                                btn_x_range.end,
+                                ui.clip_rect().bottom(),
+                            ),
                         ),
                         btn_area,
                         Sense::hover(),
@@ -321,6 +341,7 @@ impl NetworkState {
         to self.network {
             pub fn pull_err(&self) -> Option<anyhow::Error>;
             pub fn pull_ws_message(&self) -> Option<String>;
+            pub fn broadcast_ws_message(&self, msg: String);
             pub fn restart_server(&self) -> anyhow::Result<()>;
             pub fn restart_ws_client(&self) -> anyhow::Result<()>;
             pub fn stop(self);

@@ -7,11 +7,11 @@ use anyhow::{anyhow, Context};
 use eframe::egui::Context as EguiCtx;
 use tokio::{
     select,
-    sync::{mpsc as ampsc, oneshot},
+    sync::{broadcast, mpsc as ampsc, oneshot},
     task as atask,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 mod server;
 mod ws_client;
@@ -24,6 +24,7 @@ pub struct Network {
     err_ws_client_rx: mpsc::Receiver<anyhow::Error>,
 
     ws_msg_recv_rx: mpsc::Receiver<String>,
+    ws_msg_send_tx: broadcast::Sender<String>,
 
     stop_token: CancellationToken,
 
@@ -38,15 +39,17 @@ impl Network {
         let (err_ws_client_tx, err_ws_client_rx) = mpsc::channel();
 
         let (ws_msg_recv_tx, ws_msg_recv_rx) = mpsc::channel();
+        let (ws_msg_send_tx, _) = broadcast::channel::<String>(114514);
 
         let stop_token = CancellationToken::new();
         let (ctrl_tx, mut ctrl_rx) = ampsc::unbounded_channel();
 
         let stop_token_cloned = stop_token.clone();
         let egui_ctx_cloned = egui_ctx.clone();
+        let ws_msg_send_tx_cloned = ws_msg_send_tx.clone();
         let network_fut = async move {
             let (mut server_stop_token, server_fut) =
-                server::run_server();
+                server::run_server(ws_msg_send_tx_cloned.clone());
             let mut server_handle = atask::spawn(server_fut);
             let (mut ws_client_stop_token, ws_client_fut) =
                 ws_client::run_ws_client(
@@ -106,7 +109,7 @@ impl Network {
                                     info!("waiting previous server to finish");
                                     handle_task_result(("server", server_handle.await, None));
                                 }
-                                let (tx, fut) = server::run_server();
+                                let (tx, fut) = server::run_server(ws_msg_send_tx_cloned.clone());
                                 server_stop_token = tx;
                                 server_handle = atask::spawn(fut);
                                 let _ = done_tx.send(());
@@ -174,6 +177,7 @@ impl Network {
             err_ws_client_rx,
 
             ws_msg_recv_rx,
+            ws_msg_send_tx,
 
             stop_token,
             ctrl_tx,
@@ -194,6 +198,13 @@ impl Network {
 
     pub fn pull_ws_message(&self) -> Option<String> {
         self.ws_msg_recv_rx.try_recv().ok()
+    }
+
+    pub fn broadcast_ws_message(&self, msg: String) {
+        let result = self.ws_msg_send_tx.send(msg);
+        if let Err(err) = result {
+            debug!("failed to send message to websocket threads: {err}");
+        }
     }
 
     pub fn restart_server(&self) -> anyhow::Result<()> {
