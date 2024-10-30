@@ -1,5 +1,6 @@
 /target
 /Cargo.lock
 /font
-/log.jsonl
 /demo.txt
+/*.jsonl
+/output.mov
