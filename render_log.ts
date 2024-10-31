@@ -17,6 +17,8 @@ const canvas = createCanvas(width, height);
 const ctx = canvas.getContext("2d");
 ctx.font = `"24px Source Han Sans"`;
 ctx.fillStyle = "#eee";
+ctx.shadowColor = "green";
+ctx.shadowBlur = 2;
 
 interface DanmakuItem {
     msg: string;
